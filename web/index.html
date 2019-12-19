@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<script src="lib/d3.v5.min.js"></script>
+<script src="lib/d3-scale-chromatic.v1.min.js"></script>
+<script src="lib/d3-tip.min.js"></script>
+<script src="lib/topojson.v2.min.js"></script>
+<script src="lib/d3-simple-slider.min.js"></script>
+<title>Global Warming Twitter Sentiment</title>
+<link
+  rel="stylesheet"
+  href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css"
+/>
+
+<style>
+
+.counties {
+  fill: none;
+}
+
+.states {
+  fill: none;
+  stroke: #E1E8ED;
+  stroke-linejoin: round;
+}
+
+.d3-tip {
+      line-height: 1;
+      padding: 6px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+.container {
+    display: inline-block;
+    float: left;
+    padding: 0;
+    width: auto;
+}
+
+.axis path,
+.axis line {
+  fill: none;
+  stroke: #2a3439;
+  shape-rendering: crispEdges;
+}
+
+.grid path {
+    stroke-width: 0;
+}
+.line {
+    fill: none;
+    stroke: #ffab00;
+    stroke-width: 3;
+}
+
+#slider-range {
+    margin-top: -50px;
+}
+
+</style>
+<body>
+<div class="container" id="states"></div>
+<div class="container" id="chart"></div>
+<div class="container" id="timeline"></div>
+<div class="container" id="slider-range"></div>
+
+<script>
+    var margin = {top: 100, right: 200, bottom: 50, left: 100}
+        , width = 1000 - margin.left - margin.right
+        , height = 800 - margin.top - margin.bottom;
+
+    var perceptions = d3.map();
+
+    var projection = d3.geoAlbersUsa()
+        .translate([500, height/2])
+        .scale([1300]);
+
+    var path = d3.geoPath().projection(projection);
+
+    var color = d3.interpolateRdBu;
+
+    var parseTime = d3.timeParse("%Y-%m-%d");
+    var unixTimeParse = d3.timeParse("%s");
+
+    var dataset = d3.csv("../data/states/date_perceptions.csv").then(function(data) { return data; } );
+
+    var perception_data = dataset.then( function(value) {
+        return Promise.all( value.map( function(results) {
+            perceptions.set(results.states, +results["total"]);
+            return {
+                "date" : results["date"],
+                "state" : results["location"],
+                "positive" : results["positive"],
+                "negative" : results["negative"],
+                "neutral" : results["neutral"],
+                "total" : + results["total"],
+                "perception" : results["perception"]
+            };
+        }))
+    });
+
+    var usData = null;
+    var stateMap = null;
+
+    var US_NAME = "United States";
+
+    var promises = [
+        d3.json("states-10m.json"),
+        d3.csv("../data/states/date_perceptions.csv").then(function(d) {  perceptions.set(d["location"], +d["perception"]); })
+    ]
+
+    Promise.all(promises).then(ready)
+
+
+    var graphBarChart = function(map) {
+        chartHeight = height / 3;
+
+        // clear out bar graph
+        d3.select("#bar-graph").html("");
+
+        var svg = d3.select("#bar-graph")
+                    .append("g").attr("transform", "translate(" +margin.left + "," + margin.top +")");
+
+        svg.append("text")
+            .attr("x", width / 2)
+            .attr("y", -20)
+            .attr("text-anchor", "middle")
+            .attr("fill", "#2a3439")
+            .style("font-size", "20.px")
+            .style("font-weight", "bold")
+            .text("Total " + map.name + " Sentiment");
+
+        var max_val = Math.max(map.neutral, Math.max(map.positive, map.negative));
+
+
+        var xScale = d3.scaleLinear()
+            .domain([0, max_val])
+            .range([0, width]);
+
+        var xAxis = d3.axisBottom()
+            .scale(xScale);
+
+        var yRangeScale = d3.scaleLinear()
+            .domain([0, 3])
+            .range([0, chartHeight]);
+
+        var yRange = []
+        yRange.push(yRangeScale(0))
+        yRange.push(yRangeScale(1))
+        yRange.push(yRangeScale(2))
+
+        var yScale = d3.scaleOrdinal()
+            .domain(["Believer", "Neutral", "Skeptic"])
+            .range(yRange);
+
+        var yAxis = d3.axisLeft()
+            .scale(yScale);
+
+        svg.append("g")
+            .append('rect')
+            .attr("height", chartHeight/3 - 5)
+            .attr("y", yScale("Believer"))
+            .attr("width", xScale(map.positive))
+            .attr("fill", "#1DA1F2");
+
+        svg.append("g")
+            .append('rect')
+            .attr("height", chartHeight/3 - 5)
+            .attr("y", yScale("Neutral"))
+            .attr("width", xScale(map.neutral))
+            .attr("fill", "#657786")
+
+        svg.append("g")
+            .append('rect')
+            .attr("height", chartHeight/3 -5 )
+            .attr("y", yScale("Skeptic"))
+            .attr("width", xScale(map.negative))
+            .attr("fill", "#E48268");
+
+        svg.append("g")
+            .attr("class", "y axis")
+            .attr("transform", "translate(0," + chartHeight/3/2 + ")")
+            .style("font-size", "20px")
+            .style("fill", "#2a3439")
+            .call(yAxis);
+
+        svg.append("g")
+            .attr("class", "x axis")
+            .attr("transform", "translate(0," + chartHeight + ")")
+            .style("font-size", "14px")
+            .style("fill", "#2a3439")
+            .call(xAxis);
+    }
+
+
+    var graphLineChart = function(dateMap, name) {
+        chartHeight = height/3
+        data_arr = []
+
+        for (var k in dateMap) {
+            data_arr.push(dateMap[k]);
+        }
+
+        d3.select("#line-graph").html("");
+
+        var svg = d3.select("#line-graph")
+                    .append("g").attr("transform", "translate(" + margin.left + "," + margin.top +")");
+
+        extent = d3.extent(data_arr, function(d) { return d.date; });
+
+        days_diff = (extent[1]-extent[0])/(1000*60*60*24);
+
+        useDays = days_diff < 6 * 30;
+
+        timeName = useDays ? "Day" : "Month";
+
+        minDate = extent[0].getFullYear()+"-"+(extent[0].getMonth()+1);
+        maxDate = extent[1].getFullYear()+"-"+(extent[1].getMonth()+1);
+
+        if (useDays) {
+            minDate += "-" + extent[0].getDate();
+            maxDate += "-" + extent[1].getDate();
+        }
+
+        ticks = 3;
+        if (days_diff < 365 * 2) {
+            ticks = 2;
+        }
+        if (days_diff < 365) {
+            ticks = 1;
+        }
+        if (days_diff < 6 * 30) {
+            ticks = 10;
+        }
+        if (days_diff < 3 * 30) {
+            ticks = 5;
+        }
+        if (days_diff < 1.5 * 30) {
+            ticks = 3;
+        }
+        if (days_diff < 30) {
+            ticks = 1;
+        }
+
+        // console.log(days_diff);
+
+        svg.append("text")
+            .attr("x", width / 2)
+            .attr("y", -20)
+            .attr("text-anchor", "middle")
+            .attr("fill", "#2a3439")
+            .style("font-size", "20.px")
+            .style("font-weight", "bold")
+            .text(name + " Sentiment (" + minDate + " — " + maxDate + ")");
+
+        var xScale = d3.scaleTime()
+                .domain(d3.extent(data_arr, function(d) { return d.date; }))
+                .range([0, width]);
+
+        var yScale = d3.scaleLinear()
+                .domain([d3.max(data_arr, function(d) { return Math.max(d.negative, Math.max(d.positive, d.neutral)); }), 0])
+                .range([0, chartHeight]);
+
+        var xAxis = d3.axisBottom()
+                .scale(xScale);
+
+        if (!useDays) {
+            xAxis.tickFormat(d3.timeFormat("%Y-%m"))
+            .ticks(d3.timeMonth.every(ticks));
+        } else {
+            xAxis.tickFormat(d3.timeFormat("%Y-%m-%d"))
+            .ticks(d3.timeDay.every(ticks));
+        }
+
+        var yAxis = d3.axisLeft()
+                .scale(yScale);
+
+
+        var positiveLine = d3.line()
+                .curve(d3.curveMonotoneX)
+                .x(function(d) { return xScale(d.date); })
+                .y(function(d) { return yScale(d.positive); });
+
+        var negativeLine = d3.line()
+                .curve(d3.curveMonotoneX)
+                .x(function(d) { return xScale(d.date); })
+                .y(function(d) { return yScale(d.negative); });
+
+        var neutralLine = d3.line()
+                .curve(d3.curveMonotoneX)
+                .x(function(d) { return xScale(d.date); })
+                .y(function(d) { return yScale(d.neutral); });
+
+        svg.append("path")
+            .data([data_arr])
+            .attr("class", "line")
+            .attr("d", positiveLine)
+            .style("stroke", "#1DA1F2");
+
+        svg.append("path")
+            .data([data_arr])
+            .attr("class", "line")
+            .attr("d", negativeLine)
+            .style("stroke", "#14171A");
+
+        svg.append("path")
+            .data([data_arr])
+            .attr("class", "line")
+            .attr("d", neutralLine)
+            .style("stroke", "#E48268");
+
+
+        svg.append("g")
+            .attr("class", "y axis")
+            .attr("transform", "translate(0," + 0 + ")")
+            .style("font-size", "12px")
+            .style("fill", "#2a3439")
+            .call(yAxis);
+
+        svg.append("g")
+            .attr("class", "x axis")
+            .attr("transform", "translate(0," + chartHeight + ")")
+            .call(xAxis)
+            .selectAll("text")
+                .style("text-anchor", "end")
+                .attr("dx", "-.8em")
+                .attr("dy", ".15em")
+                .attr("transform", "rotate(-65)");
+    }
+
+    var graphSubCharts = function(stateName) {
+        if (stateMap[stateName] != null) {
+            graphBarChart(stateMap[stateName]);
+            graphLineChart(stateMap[stateName].dates, stateName);
+        } else {
+            graphBarChart(stateMap[US_NAME]);
+            graphLineChart(stateMap[US_NAME].dates, US_NAME);
+        }
+    }
+
+    var graphStates = function(map) {
+        // clear out us map
+        d3.select("#us-states").html("");
+
+        var svg = d3.select("#us-states");
+
+        svg.append("g")
+            .attr("class", "states")
+            .selectAll("path")
+            .data(topojson.feature(usData, usData.objects.states).features)
+            .enter().append("path")
+            .attr("fill", function(d) { try { return color(map[d.properties.name].perception); } catch(err) { return "#fff"; }})
+            .attr("d", path)
+            .on('mouseover', function(d) { graphSubCharts(d.properties.name) })
+            .on('mouseout', function(d) { graphSubCharts(US_NAME)});
+
+        svg.append("path")
+            .datum(topojson.mesh(usData, usData.objects.states, function(a, b) { return a !== b; }))
+            .attr("class", "states")
+            .attr("fill", function(d) { try { return color(map[d.properties.name].perception); } catch(err) { return "#fff";}  })
+            .attr("d", path);
+
+        // Add supporting text
+         svg.append("text")
+              .attr("x", (width/1.4))
+              .attr("y", 30)
+              .attr("text-anchor", "middle")
+            .attr("font-family", "sans-serif")
+              .style("font-size", "35px")
+              .attr("fill", "#2a3439")
+              .style("font-weight", "bold")
+              .text("US Climate Change Stance: Mapped");
+
+         svg.append("text")
+              .attr("x", (width/6))
+              .attr("y", 690)
+            .attr("font-family", "sans-serif")
+              .style("font-size", "24px")
+              .attr("fill", "#2a3439")
+              .text("Drag slider to see how climate change stance evolved over time");
+
+    }
+
+    var cleanData = function(data, extent) {
+        stateMap = {};
+        dateMap = {};
+
+        filter = data.filter(function (d) {
+            return parseTime(d.date) >= extent[0] && parseTime(d.date) <= extent[1];
+        });
+
+
+        stateMap[US_NAME] = {
+            "name": US_NAME,
+            "positive": 0,
+            "negative": 0,
+            "neutral": 0,
+            "total": 0,
+            "perception": 0,
+            "dates": {}
+        }
+
+        // create stateMap
+        for(var i in filter) {
+            d = filter[i];
+
+            if (!(d.state in stateMap)) {
+                stateMap[d.state] = {
+                    "name": d.state,
+                    "positive": 0,
+                    "negative": 0,
+                    "neutral": 0,
+                    "total": 0,
+                    "perception": 0,
+                    "dates" : {}
+                }
+            }
+
+            stateMap[d.state].positive += +d.positive;
+            stateMap[d.state].negative += +d.negative;
+            stateMap[d.state].neutral += +d.neutral;
+            stateMap[d.state].total += (+d.neutral + +d.negative + +d.positive);
+
+            stateMap[US_NAME].positive += +d.positive;
+            stateMap[US_NAME].negative += +d.negative;
+            stateMap[US_NAME].neutral += +d.neutral;
+            stateMap[US_NAME].total += (+d.neutral + +d.negative + +d.positive);
+
+            // Handle date information
+            if (!(d.date in stateMap[d.state].dates)) {
+                stateMap[d.state].dates[d.date] = {
+                    "date": parseTime(d.date),
+                    "positive": 0,
+                    "negative": 0,
+                    "neutral": 0
+                }
+            }
+
+            stateMap[d.state].dates[d.date].positive += +d.positive;
+            stateMap[d.state].dates[d.date].negative += +d.negative;
+            stateMap[d.state].dates[d.date].neutral += +d.neutral;
+
+            // US total date info
+            if (!(d.date in stateMap[US_NAME].dates)) {
+                stateMap[US_NAME].dates[d.date] = {
+                    "date": parseTime(d.date),
+                    "positive": 0,
+                    "negative": 0,
+                    "neutral": 0
+                }
+            }
+
+            stateMap[US_NAME].dates[d.date].positive += +d.positive;
+            stateMap[US_NAME].dates[d.date].negative += +d.negative;
+            stateMap[US_NAME].dates[d.date].neutral += +d.neutral;
+        }
+
+        // normalize perception values
+        for (var key in stateMap) {
+            val = stateMap[key];
+
+            val.perception += (val.positive / val.total);
+            val.perception += (val.neutral / val.total) * 0.5;
+        }
+
+
+        graphSubCharts(US_NAME);
+        graphStates(stateMap);
+    }
+
+    function ready([us]) {
+        perception_data.then( function(data) {
+            usData = us;
+
+            extent = d3.extent(data, function(d) { return parseTime(d.date); });
+
+            var svg = d3.select("#states").append("svg")
+                .attr("id", "us-states")
+                .attr("width", width + margin.left + margin.right+80)
+                .attr("height", height + margin.top + margin.bottom-100);
+
+            var bar = d3.select("#chart").append("svg")
+                .attr("id", "bar-graph")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", (height + margin.top + margin.bottom)/2);
+
+            var line = d3.select("#timeline").append("svg")
+                .attr("id", "line-graph")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", (height + margin.top + margin.bottom)/2);
+
+            var slider = d3.sliderBottom()
+                .min(extent[0])
+                .max(extent[1])
+                .step(1000*60*60*24*30)
+                .width(width + margin.left + margin.right - 200)
+                .tickFormat(d3.timeFormat("%Y-%m"))
+                .ticks(d3.timeMonth.every(2))
+                .fill('#2196f3')
+                .default(extent)
+                .on('onchange', function(d) { cleanData(data, [unixTimeParse(d[0]/1000), unixTimeParse(d[1]/1000)]); });
+
+            var range = d3.select("#slider-range").append("svg")
+                .attr("id", "time-range")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", 100)
+                .append("g")
+                .attr("transform", "translate(" + margin.left + ",30)")
+                .call(slider)
+                .selectAll("text")
+                    .style("text-anchor", "end")
+                    .attr("dx", "-.8em")
+                    .attr("dy", "-1em")
+                    .attr("transform", "rotate(-65)");
+
+            cleanData(data, extent);
+        });
+    }
+
+</script>
+</body>
+</html>
