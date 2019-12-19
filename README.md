@@ -10,6 +10,8 @@ attempts at recreating our visualization may not turn out the same.
 In order to run a demo of the visualization, with the data that we generated, skip to the [Data Visualization](#data-visualization) section.
 
 This project was originally done as an assignment from Georgia Institute of Technology's Masters of Analytics Program.  It has been since adapted and iterated upon.  The original project was authored by Matt Struble, Daniel Kirel, Silviya Simeonova and myself.  
+
+Tableau Viz: https://public.tableau.com/views/MapandCountchart/Full?:display_count=y&publish=yes&:origin=viz_share_link
  
 ## Environment Setup
 
